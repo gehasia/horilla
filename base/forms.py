@@ -1935,6 +1935,7 @@ class DynamicMailTestForm(forms.Form):
     """
     to_email = forms.EmailField(label="To email", required=True)
 
+
 class MultipleApproveConditionForm(ModelForm):
     CONDITION_CHOICE = [
         ("equal", _("Equal (==)")),

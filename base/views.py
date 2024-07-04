@@ -480,7 +480,7 @@ class HorillaPasswordResetView(PasswordResetView):
             opts = {
                 "use_https": self.request.is_secure(),
                 "token_generator": self.token_generator,
-                "from_email": email_backend.dynamic_username_with_display_name,
+                "from_email": email_backend.dynamic_from_email_with_display_name,
                 "email_template_name": self.email_template_name,
                 "subject_template_name": self.subject_template_name,
                 "request": self.request,
@@ -1202,7 +1202,7 @@ def mail_server_test_email(request):
     if request.method == "POST":
         form = DynamicMailTestForm(request.POST)
         if form.is_valid():
-            email_to = form["to_email"]
+            email_to = form.cleaned_data["to_email"]
             subject = _("Test mail from Horilla")
             body = _("Email tested successfully")
             email_backend = ConfiguredEmailBackend()
@@ -1214,7 +1214,7 @@ def mail_server_test_email(request):
                 send_mail(
                     subject,
                     body,
-                    email_backend.dynamic_username_with_display_name,
+                    email_backend.dynamic_from_email_with_display_name,
                     [email_to],
                     fail_silently=False,
                     connection=email_backend
