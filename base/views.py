@@ -1212,7 +1212,7 @@ def mail_server_test_email(request):
                 msg = EmailMultiAlternatives(
                     subject,
                     text_content,
-                    email_backend.dynamic_username_with_display_name,
+                    email_backend.dynamic_from_email_with_display_name,
                     [email_to],
                     connection=email_backend,
                 )
