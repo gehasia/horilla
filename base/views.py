@@ -258,6 +258,12 @@ def initialize_database_company(request):
         form = CompanyForm(request.POST, request.FILES)
         if form.is_valid():
             company = form.save()
+            try:
+                employee = request.user.employee_get
+                employee.employee_work_info.company_id = company
+                employee.employee_work_info.save()
+            except:
+                pass
             return render(
                 request,
                 "initialize_database/horilla_department.html",
@@ -568,56 +574,10 @@ def home(request):
     first_day_of_week = today - timedelta(days=today_weekday)
     last_day_of_week = first_day_of_week + timedelta(days=6)
 
-    # employees_with_pending = []
     employee_charts = DashboardEmployeeCharts.objects.get_or_create(
         employee=request.user.employee_get
     )[0]
 
-    # List of field names to focus on
-    # fields_to_focus = [
-    #     "job_position_id",
-    #     "department_id",
-    #     "work_type_id",
-    #     "employee_type_id",
-    #     "job_role_id",
-    #     "reporting_manager_id",
-    #     "company_id",
-    #     "location",
-    #     "email",
-    #     "mobile",
-    #     "shift_id",
-    #     "date_joining",
-    #     "contract_end_date",
-    #     "basic_salary",
-    #     "salary_hour",
-    # ]
-
-    # for employee in EmployeeWorkInformation.objects.filter(employee_id__is_active=True):
-    #     completed_field_count = sum(
-    #         1
-    #         for field_name in fields_to_focus
-    #         if getattr(employee, field_name) is not None
-    #     )
-    #     if completed_field_count < 14:
-    #         # Create a dictionary with employee information and pending field count
-    #         percent = f"{((completed_field_count / 14) * 100):.1f}"
-    #         employee_info = {
-    #             "employee": employee,
-    #             "completed_field_count": percent,
-    #         }
-    #         employees_with_pending.append(employee_info)
-    #     else:
-    #         pass
-
-    # emps = Employee.objects.filter(employee_work_info__isnull=True)
-    # for emp in emps:
-    #     employees_with_pending.insert(
-    #         0,
-    #         {
-    #             "employee": Workinfo(employee=emp),
-    #             "completed_field_count": "0",
-    #         },
-    #     )
     announcements = Announcement.objects.all()
     general_expire = AnnouncementExpire.objects.all().first()
     general_expire_date = 30 if not general_expire else general_expire.days
@@ -649,7 +609,6 @@ def home(request):
     context = {
         "first_day_of_week": first_day_of_week.strftime("%Y-%m-%d"),
         "last_day_of_week": last_day_of_week.strftime("%Y-%m-%d"),
-        # "employees_with_pending": employees_with_pending,
         "announcement": announcement_list,
         "general_expire_date": general_expire_date,
         "charts": employee_charts.charts,
@@ -1194,6 +1153,93 @@ def mail_server_conf(request):
     )
 
 
+from email.mime.image import MIMEImage
+
+from django.conf import settings
+from django.core.mail import EmailMultiAlternatives
+from django.utils.html import strip_tags
+
+
+@login_required
+@permission_required("base.view_dynamicemailconfiguration")
+def mail_server_test_email(request):
+    instance_id = request.GET.get("instance_id")
+    form = DynamicMailTestForm()
+    if request.method == "POST":
+        form = DynamicMailTestForm(request.POST)
+        if form.is_valid():
+            email_to = form.cleaned_data["to_email"]
+            subject = _("Test mail from Horilla")
+
+            # HTML content
+            html_content = """
+            <html>
+                <body style="font-family: Arial, sans-serif; margin: 0; padding: 0;">
+                    <table align="center" width="600" cellpadding="0" cellspacing="0" border="0" style="border: 1px solid #e0e0e0; border-radius: 10px; overflow: hidden;">
+                        <tr>
+                            <td align="center" bgcolor="#4CAF50" style="padding: 20px 0;">
+                                <h1 style="color: #ffffff; margin: 0;">Horilla</h1>
+                            </td>
+                        </tr>
+                        <tr>
+                            <td style="padding: 20px;">
+                                <h3 style="color: #4CAF50;">Email tested successfully</h3>
+                                <b><p style="font-size: 14px;">Hi,<br>
+                                    This email is being sent as part of mail sever testing from Horilla.</p></b>
+                                <img src="cid:unique_image_id" alt="Test Image" style="width: 200px; height: auto; margin: 20px 0;">
+                            </td>
+                        </tr>
+                        <tr>
+                            <td bgcolor="#f0f0f0" style="padding: 10px; text-align: center;">
+                                <p style="font-size: 12px; color: black;">&copy; 2024 Horilla, Inc.</p>
+                            </td>
+                        </tr>
+                    </table>
+                </body>
+            </html>
+            """
+
+            # Plain text content (fallback for email clients that do not support HTML)
+            text_content = strip_tags(html_content)
+
+            email_backend = ConfiguredEmailBackend()
+            emailconfig = DynamicEmailConfiguration.objects.filter(
+                id=instance_id
+            ).first()
+            email_backend.configuration = emailconfig
+
+            try:
+                msg = EmailMultiAlternatives(
+                    subject,
+                    text_content,
+                    email_backend.dynamic_username_with_display_name,
+                    [email_to],
+                    connection=email_backend,
+                )
+                msg.attach_alternative(html_content, "text/html")
+
+                # Attach the image
+                image_path = settings.STATIC_ROOT + "/images/ui/horilla-logo.png"
+                with open(image_path, "rb") as img:
+                    msg_img = MIMEImage(img.read())
+                    msg_img.add_header("Content-ID", "<unique_image_id>")
+                    msg.attach(msg_img)
+
+                msg.send()
+
+            except Exception as e:
+                messages.error(request, " ".join([_("Something went wrong :"), str(e)]))
+                return HttpResponse("<script>window.location.reload()</script>")
+
+            messages.success(request, _("Mail sent successfully"))
+            return HttpResponse("<script>window.location.reload()</script>")
+    return render(
+        request,
+        "base/mail_server/form_email_test.html",
+        {"form": form, "instance_id": instance_id},
+    )
+
+
 @login_required
 @permission_required("base.view_dynamicemailconfiguration")
 def mail_server_test_email(request):
@@ -1515,14 +1561,14 @@ def job_role_create(request):
     if request.method == "POST":
         form = JobRoleForm(request.POST)
         if form.instance.pk and form.is_valid():
-            form.save()
+            form.save(commit=True)
             messages.success(request, _("Job role has been created successfully!"))
         elif (
             not form.instance.pk
             and form.data.getlist("job_position_id")
             and form.data.get("job_role")
         ):
-            form.save()
+            form.save(commit=True)
             messages.success(request, _("Job role has been created successfully!"))
             return HttpResponse("<script>window.location.reload()</script>")
 
@@ -1571,7 +1617,7 @@ def job_role_update(request, id, **kwargs):
     if request.method == "POST":
         form = JobRoleForm(request.POST, instance=job_role)
         if form.is_valid():
-            form.save()
+            form.save(commit=True)
             messages.success(request, _("Job role updated."))
             return HttpResponse("<script>window.location.reload()</script>")
 
@@ -3012,11 +3058,13 @@ def work_type_request_search(request):
     field = request.GET.get("field")
     f = WorkTypeRequestFilter(request.GET)
     work_typ_requests = filtersubordinates(request, f.qs, "base.add_worktyperequest")
-    if set(WorkTypeRequest.objects.filter(employee_id=employee)).issubset(set(f.qs)):
-        work_typ_requests = work_typ_requests | WorkTypeRequest.objects.filter(
-            employee_id=employee
-        )
-    work_typ_requests = sortby(request, work_typ_requests, "orderby")
+    employee_work_requests = list(WorkTypeRequest.objects.filter(employee_id=employee))
+    subordinates_work_requests = list(work_typ_requests)
+    combined_requests = list(set(subordinates_work_requests + employee_work_requests))
+    combined_requests_qs = WorkTypeRequest.objects.filter(
+        id__in=[req.id for req in combined_requests]
+    )
+    work_typ_requests = sortby(request, combined_requests_qs, "orderby")
     template = "work_type_request/htmx/requests.html"
 
     if field != "" and field is not None:
@@ -3132,6 +3180,21 @@ def work_type_request(request):
     return render(request, "work_type_request/request_form.html", context=context)
 
 
+def handle_wtr_redirect(request, work_type_request):
+    hx_request = request.META.get("HTTP_HX_REQUEST") == "true"
+    current_url = request.META.get("HTTP_HX_CURRENT_URL")
+    if hx_request:
+        if current_url:
+            if "/work-type-request-view/" in current_url:
+                return redirect(f"/work-type-request-search?{request.GET.urlencode()}")
+            elif "/employee-view/" in current_url:
+                return redirect(
+                    f"/employee/shift-tab/{work_type_request.employee_id.id}"
+                )
+        return HttpResponse("<script>window.location.reload()</script>")
+    return HttpResponseRedirect(request.META.get("HTTP_REFERER", "/"))
+
+
 @login_required
 def work_type_request_cancel(request, id):
     """
@@ -3141,37 +3204,42 @@ def work_type_request_cancel(request, id):
 
     """
     work_type_request = WorkTypeRequest.find(id)
-    if (
+    if not work_type_request:
+        messages.error(request, _("Work type request not found."))
+        return HttpResponseRedirect(request.META.get("HTTP_REFERER", "/"))
+
+    if not (
         is_reportingmanger(request, work_type_request)
         or request.user.has_perm("base.cancel_worktyperequest")
         or work_type_request.employee_id == request.user.employee_get
         and work_type_request.approved == False
     ):
-        work_type_request.canceled = True
-        work_type_request.approved = False
-        work_info = EmployeeWorkInformation.objects.filter(
-            employee_id=work_type_request.employee_id
-        )
-        if work_info.exists():
-            work_type_request.employee_id.employee_work_info.work_type_id = (
-                work_type_request.previous_work_type_id
-            )
-            work_type_request.employee_id.employee_work_info.save()
-        work_type_request.save()
-        messages.success(request, _("Work type request has been rejected."))
-        notify.send(
-            request.user.employee_get,
-            recipient=work_type_request.employee_id.employee_user_id,
-            verb="Your work type request has been rejected.",
-            verb_ar="تم إلغاء طلب نوع وظيفتك",
-            verb_de="Ihre Arbeitstypanfrage wurde storniert",
-            verb_es="Su solicitud de tipo de trabajo ha sido cancelada",
-            verb_fr="Votre demande de type de travail a été annulée",
-            redirect=reverse("work-type-request-view") + f"?id={work_type_request.id}",
-            icon="close",
-        )
+        messages.error(request, _("You don't have permission"))
         return HttpResponseRedirect(request.META.get("HTTP_REFERER", "/"))
-    return HttpResponse("You dont have permission")
+    work_type_request.canceled = True
+    work_type_request.approved = False
+    work_info = EmployeeWorkInformation.objects.filter(
+        employee_id=work_type_request.employee_id
+    )
+    if work_info.exists():
+        work_type_request.employee_id.employee_work_info.work_type_id = (
+            work_type_request.previous_work_type_id
+        )
+        work_type_request.employee_id.employee_work_info.save()
+    work_type_request.save()
+    messages.success(request, _("Work type request has been rejected."))
+    notify.send(
+        request.user.employee_get,
+        recipient=work_type_request.employee_id.employee_user_id,
+        verb="Your work type request has been rejected.",
+        verb_ar="تم إلغاء طلب نوع وظيفتك",
+        verb_de="Ihre Arbeitstypanfrage wurde storniert",
+        verb_es="Su solicitud de tipo de trabajo ha sido cancelada",
+        verb_fr="Votre demande de type de travail a été annulée",
+        redirect=reverse("work-type-request-view") + f"?id={work_type_request.id}",
+        icon="close",
+    )
+    return handle_wtr_redirect(request, work_type_request)
 
 
 @login_required
@@ -3222,44 +3290,42 @@ def work_type_request_approve(request, id):
     """
 
     work_type_request = WorkTypeRequest.find(id)
-    if (
+    if not work_type_request:
+        messages.error(request, _("Work type request not found."))
+        return HttpResponseRedirect(request.META.get("HTTP_REFERER", "/"))
+    if not (
         is_reportingmanger(request, work_type_request)
         or request.user.has_perm("approve_worktyperequest")
         or request.user.has_perm("change_worktyperequest")
         and not work_type_request.approved
     ):
-        """
-        Here the request will be approved, can send mail right here
-        """
-        if not work_type_request.is_any_work_type_request_exists():
-            work_type_request.approved = True
-            work_type_request.canceled = False
-            work_type_request.save()
-            messages.success(request, _("Work type request has been approved."))
-            notify.send(
-                request.user.employee_get,
-                recipient=work_type_request.employee_id.employee_user_id,
-                verb="Your work type request has been approved.",
-                verb_ar="تمت الموافقة على طلب نوع وظيفتك.",
-                verb_de="Ihre Arbeitstypanfrage wurde genehmigt.",
-                verb_es="Su solicitud de tipo de trabajo ha sido aprobada.",
-                verb_fr="Votre demande de type de travail a été approuvée.",
-                redirect=reverse("work-type-request-view")
-                + f"?id={work_type_request.id}",
-                icon="checkmark",
-            )
-
-            return HttpResponseRedirect(request.META.get("HTTP_REFERER", "/"))
-
-        else:
-            messages.error(
-                request,
-                _(
-                    "An approved work type request already exists during this time period."
-                ),
-            )
-            return HttpResponseRedirect(request.META.get("HTTP_REFERER", "/"))
-    return HttpResponse("You Do nt Have Permission")
+        messages.error(request, _("You don't have permission"))
+        return HttpResponseRedirect(request.META.get("HTTP_REFERER", "/"))
+    """
+    Here the request will be approved, can send mail right here
+    """
+    if not work_type_request.is_any_work_type_request_exists():
+        work_type_request.approved = True
+        work_type_request.canceled = False
+        work_type_request.save()
+        messages.success(request, _("Work type request has been approved."))
+        notify.send(
+            request.user.employee_get,
+            recipient=work_type_request.employee_id.employee_user_id,
+            verb="Your work type request has been approved.",
+            verb_ar="تمت الموافقة على طلب نوع وظيفتك.",
+            verb_de="Ihre Arbeitstypanfrage wurde genehmigt.",
+            verb_es="Su solicitud de tipo de trabajo ha sido aprobada.",
+            verb_fr="Votre demande de type de travail a été approuvée.",
+            redirect=reverse("work-type-request-view") + f"?id={work_type_request.id}",
+            icon="checkmark",
+        )
+    else:
+        messages.error(
+            request,
+            _("An approved work type request already exists during this time period."),
+        )
+    return handle_wtr_redirect(request, work_type_request)
 
 
 @login_required
@@ -3988,36 +4054,49 @@ def shift_request_cancel(request, id):
     """
 
     shift_request = ShiftRequest.find(id)
-    if (
+    if not shift_request:
+        messages.error(request, _("Shift request not found."))
+        return HttpResponseRedirect(request.META.get("HTTP_REFERER", "/"))
+    if not (
         is_reportingmanger(request, shift_request)
         or request.user.has_perm("base.cancel_shiftrequest")
         or shift_request.employee_id == request.user.employee_get
         and shift_request.approved == False
     ):
-        shift_request.canceled = True
-        shift_request.approved = False
-
-        work_info = EmployeeWorkInformation.objects.filter(
-            employee_id=shift_request.employee_id
+        messages.error(request, _("You don't have permission"))
+        return HttpResponseRedirect(request.META.get("HTTP_REFERER", "/"))
+    shift_request.canceled = True
+    shift_request.approved = False
+    work_info = EmployeeWorkInformation.objects.filter(
+        employee_id=shift_request.employee_id
+    )
+    if work_info.exists():
+        shift_request.employee_id.employee_work_info.shift_id = (
+            shift_request.previous_shift_id
         )
-        if work_info.exists():
-            shift_request.employee_id.employee_work_info.shift_id = (
-                shift_request.previous_shift_id
-            )
-
-        if shift_request.reallocate_to and work_info.exists():
-            shift_request.reallocate_to.employee_work_info.shift_id = (
-                shift_request.shift_id
-            )
-            shift_request.reallocate_to.employee_work_info.save()
-        if work_info.exists():
-            shift_request.employee_id.employee_work_info.save()
-        shift_request.save()
-        messages.success(request, _("Shift request rejected"))
+    if shift_request.reallocate_to and work_info.exists():
+        shift_request.reallocate_to.employee_work_info.shift_id = shift_request.shift_id
+        shift_request.reallocate_to.employee_work_info.save()
+    if work_info.exists():
+        shift_request.employee_id.employee_work_info.save()
+    shift_request.save()
+    messages.success(request, _("Shift request rejected"))
+    notify.send(
+        request.user.employee_get,
+        recipient=shift_request.employee_id.employee_user_id,
+        verb="Your shift request has been canceled.",
+        verb_ar="تم إلغاء طلبك للوردية.",
+        verb_de="Ihr Schichtantrag wurde storniert.",
+        verb_es="Se ha cancelado su solicitud de turno.",
+        verb_fr="Votre demande de quart a été annulée.",
+        redirect=reverse("shift-request-view") + f"?id={shift_request.id}",
+        icon="close",
+    )
+    if shift_request.reallocate_to:
         notify.send(
             request.user.employee_get,
-            recipient=shift_request.employee_id.employee_user_id,
-            verb="Your shift request has been canceled.",
+            recipient=shift_request.reallocate_to.employee_user_id,
+            verb="Your shift request has been rejected.",
             verb_ar="تم إلغاء طلبك للوردية.",
             verb_de="Ihr Schichtantrag wurde storniert.",
             verb_es="Se ha cancelado su solicitud de turno.",
@@ -4025,21 +4104,7 @@ def shift_request_cancel(request, id):
             redirect=reverse("shift-request-view") + f"?id={shift_request.id}",
             icon="close",
         )
-        if shift_request.reallocate_to:
-            notify.send(
-                request.user.employee_get,
-                recipient=shift_request.reallocate_to.employee_user_id,
-                verb="Your shift request has been rejected.",
-                verb_ar="تم إلغاء طلبك للوردية.",
-                verb_de="Ihr Schichtantrag wurde storniert.",
-                verb_es="Se ha cancelado su solicitud de turno.",
-                verb_fr="Votre demande de quart a été annulée.",
-                redirect=reverse("shift-request-view") + f"?id={shift_request.id}",
-                icon="close",
-            )
-
-        return HttpResponseRedirect(request.META.get("HTTP_REFERER", "/"))
-    return HttpResponse("You can't cancel the request")
+    return HttpResponseRedirect(request.META.get("HTTP_REFERER", "/"))
 
 
 @login_required
@@ -4144,66 +4209,63 @@ def shift_request_bulk_cancel(request):
 @manager_can_enter("base.change_shiftrequest")
 def shift_request_approve(request, id):
     """
-    This method is used to approve shift request
+    Approve shift request
     args:
         id : shift request instance id
     """
 
     shift_request = ShiftRequest.find(id)
+    if not shift_request:
+        messages.error(request, _("Shift request not found."))
+        return HttpResponseRedirect(request.META.get("HTTP_REFERER", "/"))
 
-    if (
+    user = request.user
+    if not (
         is_reportingmanger(request, shift_request)
-        or request.user.has_perm("approve_shiftrequest")
-        or request.user.has_perm("change_shiftrequest")
+        or user.has_perm("approve_shiftrequest")
+        or user.has_perm("change_shiftrequest")
         and not shift_request.approved
     ):
-        """
-        here the request will be approved, can send mail right here
-        """
+        messages.error(request, _("You don't have permission"))
+        return HttpResponseRedirect(request.META.get("HTTP_REFERER", "/"))
 
-        if not shift_request.is_any_request_exists():
-            shift_request.approved = True
-            shift_request.canceled = False
+    if shift_request.is_any_request_exists():
+        messages.error(
+            request,
+            _("An approved shift request already exists during this time period."),
+        )
+        return HttpResponseRedirect(request.META.get("HTTP_REFERER", "/"))
 
-            if shift_request.reallocate_to:
-                shift_request.reallocate_to.employee_work_info.shift_id = (
-                    shift_request.previous_shift_id
-                )
-                shift_request.reallocate_to.employee_work_info.save()
+    shift_request.approved = True
+    shift_request.canceled = False
 
-            shift_request.save()
-            messages.success(request, _("Shift has been approved."))
-            notify.send(
-                request.user.employee_get,
-                recipient=shift_request.employee_id.employee_user_id,
-                verb="Your shift request has been approved.",
-                verb_ar="تمت الموافقة على طلبك للوردية.",
-                verb_de="Ihr Schichtantrag wurde genehmigt.",
-                verb_es="Se ha aprobado su solicitud de turno.",
-                verb_fr="Votre demande de quart a été approuvée.",
-                redirect=reverse("shift-request-view") + f"?id={shift_request.id}",
-                icon="checkmark",
-            )
-            if shift_request.reallocate_to:
-                notify.send(
-                    request.user.employee_get,
-                    recipient=shift_request.reallocate_to.employee_user_id,
-                    verb="Your shift request has been approved.",
-                    verb_ar="تمت الموافقة على طلبك للوردية.",
-                    verb_de="Ihr Schichtantrag wurde genehmigt.",
-                    verb_es="Se ha aprobado su solicitud de turno.",
-                    verb_fr="Votre demande de quart a été approuvée.",
-                    redirect=reverse("shift-request-view") + f"?id={shift_request.id}",
-                    icon="checkmark",
-                )
-            return HttpResponseRedirect(request.META.get("HTTP_REFERER", "/"))
-        else:
-            messages.error(
-                request,
-                _("An apporved shift request already exists during this time period."),
-            )
-            return HttpResponseRedirect(request.META.get("HTTP_REFERER", "/"))
-    return HttpResponse("You Dont Have Permission")
+    if shift_request.reallocate_to:
+        shift_request.reallocate_to.employee_work_info.shift_id = (
+            shift_request.previous_shift_id
+        )
+        shift_request.reallocate_to.employee_work_info.save()
+
+    shift_request.save()
+    messages.success(request, _("Shift has been approved."))
+
+    recipients = [shift_request.employee_id.employee_user_id]
+    if shift_request.reallocate_to:
+        recipients.append(shift_request.reallocate_to.employee_user_id)
+
+    for recipient in recipients:
+        notify.send(
+            user.employee_get,
+            recipient=recipient,
+            verb="Your shift request has been approved.",
+            verb_ar="تمت الموافقة على طلبك للوردية.",
+            verb_de="Ihr Schichtantrag wurde genehmigt.",
+            verb_es="Se ha aprobado su solicitud de turno.",
+            verb_fr="Votre demande de quart a été approuvée.",
+            redirect=reverse("shift-request-view") + f"?id={shift_request.id}",
+            icon="checkmark",
+        )
+
+    return HttpResponseRedirect(request.META.get("HTTP_REFERER", "/"))
 
 
 @login_required
@@ -4502,7 +4564,7 @@ def general_settings(request):
     encashment_form = EncashmentGeneralSettingsForm(instance=encashment_instance)
     history_tracking_instance = HistoryTrackingFields.objects.first()
     history_fields_form_initial = {}
-    if history_tracking_instance:
+    if history_tracking_instance and history_tracking_instance.tracking_fields:
         history_fields_form_initial = {
             "tracking_fields": history_tracking_instance.tracking_fields[
                 "tracking_fields"

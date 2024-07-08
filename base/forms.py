@@ -1933,6 +1933,7 @@ class DynamicMailTestForm(forms.Form):
     """
     DynamicEmailTest
     """
+
     to_email = forms.EmailField(label="To email", required=True)
 
 
